@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenClaw-Tower 监控面板</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 深色工业风背景 */
+        body {
+            background-color: #0d1117;
+            min-height: 100vh;
+        }
+
+        /* 呼吸灯效果 */
+        @keyframes breathe {
+            0%, 100% { opacity: 1; box-shadow: 0 0 10px currentColor; }
+            50% { opacity: 0.6; box-shadow: 0 0 20px currentColor; }
+        }
+
+        .breathing {
+            animation: breathe 2s ease-in-out infinite;
+        }
+
+        /* 报警闪烁 */
+        @keyframes alert-flash {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+            50% { box-shadow: 0 0 30px 10px rgba(239, 68, 68, 0.8); }
+        }
+
+        .alert-active {
+            animation: alert-flash 1s ease-in-out infinite;
+            border-color: #ef4444 !important;
+        }
+
+        /* 日志区域滚动条 */
+        .log-container {
+            scrollbar-width: thin;
+            scrollbar-color: #374151 #1f2937;
+        }
+
+        .log-container::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .log-container::-webkit-scrollbar-track {
+            background: #1f2937;
+        }
+
+        .log-container::-webkit-scrollbar-thumb {
+            background: #374151;
+            border-radius: 4px;
+        }
+
+        /* 代码块字体 */
+        .log-content {
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+        }
+    </style>
+</head>
+<body class="text-gray-300">
+    <!-- 报警提示 -->
+    <div id="alert-banner" style="display: none;" class="fixed top-0 left-0 right-0 z-50 bg-red-600 text-white text-center py-3 font-bold text-lg">
+        ⚠️ 检测到运行异常，建议重启
+    </div>
+
+    <!-- 主容器 -->
+    <div id="main-container" class="container mx-auto px-4 py-8 max-w-5xl transition-all duration-300">
+        <!-- 标题 -->
+        <h1 class="text-3xl font-bold text-white mb-8 flex items-center gap-3">
+            <span class="text-4xl">🕹️</span>
+            OpenClaw-Tower 监控面板
+        </h1>
+
+        <!-- 状态卡片 -->
+        <div class="bg-gray-800 rounded-xl p-6 mb-6 border border-gray-700">
+            <h2 class="text-xl font-semibold text-white mb-4">运行状态</h2>
+            <div class="flex items-center gap-4">
+                <!-- 状态指示灯 -->
+                <div id="status-indicator" class="w-6 h-6 rounded-full bg-red-500"></div>
+                <!-- 状态文字 -->
+                <div>
+                    <span id="status-text" class="text-2xl font-mono">offline</span>
+                    <span id="pid-text" class="text-gray-500 ml-2 text-sm"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 控制台卡片 -->
+        <div class="bg-gray-800 rounded-xl p-6 mb-6 border border-gray-700">
+            <h2 class="text-xl font-semibold text-white mb-4">控制台</h2>
+            <div class="flex gap-4">
+                <button id="btn-start" onclick="startGateway()"
+                    class="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-6 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                    ▶ 启动网关
+                </button>
+                <button id="btn-restart" onclick="restartGateway()"
+                    class="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-4 px-6 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                    🔄 重启网关
+                </button>
+                <button id="btn-stop" onclick="stopGateway()"
+                    class="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-4 px-6 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                    ⏹ 停止网关
+                </button>
+            </div>
+            <div id="console-message" class="mt-4 text-center text-gray-400 h-6"></div>
+        </div>
+
+        <!-- 紧急重启按钮（报错时显示） -->
+        <div id="emergency-restart" style="display: none;" class="fixed bottom-8 right-8 z-50">
+            <button onclick="restartGateway()"
+                class="bg-red-600 hover:bg-red-700 text-white font-bold py-4 px-8 rounded-full shadow-lg hover:shadow-xl transition-all transform hover:scale-105 flex items-center gap-2">
+                <span class="text-2xl">🔄</span>
+                <span class="text-lg">紧急重启</span>
+            </button>
+        </div>
+
+        <!-- 日志卡片 -->
+        <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-semibold text-white">实时日志</h2>
+                <span id="log-file" class="text-xs text-gray-500"></span>
+            </div>
+            <div class="log-container bg-gray-900 rounded-lg p-4 h-96 overflow-y-auto border border-gray-700">
+                <pre id="log-content" class="log-content text-sm text-green-400 whitespace-pre-wrap break-all">加载中...</pre>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:5000';
+        let isRunning = false;
+        let logInterval = null;
+
+        // 更新状态显示
+        async function updateStatus() {
+            try {
+                const res = await fetch(`${API_BASE}/api/status`);
+                const data = await res.json();
+
+                isRunning = data.running;
+                const indicator = document.getElementById('status-indicator');
+                const statusText = document.getElementById('status-text');
+                const pidText = document.getElementById('pid-text');
+                const btnStart = document.getElementById('btn-start');
+                const btnStop = document.getElementById('btn-stop');
+
+                if (data.running) {
+                    indicator.className = 'w-6 h-6 rounded-full bg-green-500 breathing';
+                    indicator.style.color = '#22c55e';
+                    statusText.textContent = 'online';
+                    statusText.className = 'text-2xl font-mono text-green-400';
+                    pidText.textContent = `PID: ${data.pid}`;
+                    btnStart.disabled = true;
+                    btnStop.disabled = false;
+                } else {
+                    indicator.className = 'w-6 h-6 rounded-full bg-red-500';
+                    indicator.style.color = '#ef4444';
+                    statusText.textContent = 'offline';
+                    statusText.className = 'text-2xl font-mono text-red-400';
+                    pidText.textContent = '';
+                    btnStart.disabled = false;
+                    btnStop.disabled = true;
+                }
+            } catch (e) {
+                console.error('获取状态失败:', e);
+            }
+        }
+
+        // 启动网关
+        async function startGateway() {
+            const msg = document.getElementById('console-message');
+            try {
+                const res = await fetch(`${API_BASE}/api/start`, { method: 'POST' });
+                const data = await res.json();
+                msg.textContent = data.message;
+                msg.className = 'mt-4 text-center text-green-400 h-6';
+                setTimeout(() => { msg.textContent = ''; }, 3000);
+            } catch (e) {
+                msg.textContent = '启动失败: ' + e.message;
+                msg.className = 'mt-4 text-center text-red-400 h-6';
+            }
+        }
+
+        // 停止网关
+        async function stopGateway() {
+            const msg = document.getElementById('console-message');
+            try {
+                const res = await fetch(`${API_BASE}/api/stop`, { method: 'POST' });
+                const data = await res.json();
+                msg.textContent = data.message;
+                msg.className = 'mt-4 text-center text-green-400 h-6';
+                setTimeout(() => { msg.textContent = ''; }, 3000);
+            } catch (e) {
+                msg.textContent = '停止失败: ' + e.message;
+                msg.className = 'mt-4 text-center text-red-400 h-6';
+            }
+        }
+
+        // 重启网关
+        async function restartGateway() {
+            const msg = document.getElementById('console-message');
+            try {
+                const res = await fetch(`${API_BASE}/api/restart`, { method: 'POST' });
+                const data = await res.json();
+                msg.textContent = '网关重启中，请稍候...';
+                msg.className = 'mt-4 text-center text-yellow-400 h-6';
+                setTimeout(() => { msg.textContent = ''; }, 5000);
+            } catch (e) {
+                msg.textContent = '重启失败: ' + e.message;
+                msg.className = 'mt-4 text-center text-red-400 h-6';
+            }
+        }
+
+        // 更新日志
+        async function updateLogs() {
+            try {
+                const res = await fetch(`${API_BASE}/api/logs?lines=50`);
+                const data = await res.json();
+
+                // 更新日志内容
+                const logContent = document.getElementById('log-content');
+                if (data.logs && data.logs.length > 0) {
+                    logContent.textContent = data.logs.join('\n');
+                } else {
+                    logContent.textContent = '暂无日志';
+                }
+
+                // 显示日志文件名
+                document.getElementById('log-file').textContent = data.file || '';
+
+                // 报警检测
+                checkAlert(data.has_error);
+            } catch (e) {
+                console.error('获取日志失败:', e);
+            }
+        }
+
+        // 报警检测
+        let alertShown = false;
+        function checkAlert(hasError) {
+            const mainContainer = document.getElementById('main-container');
+            const alertBanner = document.getElementById('alert-banner');
+            const emergencyRestart = document.getElementById('emergency-restart');
+
+            if (hasError && !alertShown) {
+                alertShown = true;
+                mainContainer.classList.add('alert-active');
+                alertBanner.classList.remove('hidden');
+                emergencyRestart.style.display = 'block';
+            } else if (!hasError && alertShown) {
+                alertShown = false;
+                mainContainer.classList.remove('alert-active');
+                alertBanner.classList.add('hidden');
+                emergencyRestart.style.display = 'none';
+            }
+        }
+
+        // 初始化
+        async function init() {
+            // 强制隐藏报警元素
+            document.getElementById('emergency-restart').style.display = 'none';
+            document.getElementById('alert-banner').style.display = 'none';
+
+            await updateStatus();
+            await updateLogs();
+
+            // 每2秒刷新日志
+            logInterval = setInterval(async () => {
+                await updateStatus();
+                await updateLogs();
+            }, 2000);
+        }
+
+        init();
+    </script>
+</body>
+</html>
