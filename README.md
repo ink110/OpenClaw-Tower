@@ -8,6 +8,127 @@
   <img src="https://img.shields.io/badge/tailwindcss-2.0+-cyan.svg" alt="Tailwind">
 </p>
 
+---
+
+## AI 协作与自动化开发准则 (AI-Driven Development SOP)
+
+> 本准则适用于所有 AI 参与的代码修改和功能开发场景，确保开发过程可追溯、可测试、可回滚。
+
+### 1. 环境自检 (Self-Diagnostic)
+
+**原则**：在修改任何代码前，Claude 必须先通过命令行工具（如 `ls`, `cat`, `grep`）扫描相关路径，确保对当前项目结构和逻辑有物理层面的认知。
+
+**操作规范**：
+- 读取或修改文件前，先用 `ls` 确认文件存在
+- 用 `grep` 或 `cat` 查看关键代码片段
+- 确认涉及的配置文件、日志路径、依赖版本等信息
+
+**示例**：
+```bash
+# 修改 backend/app.py 前，先确认项目结构
+ls -la
+ls -la backend/
+grep -n "parse_status" backend/app.py
+```
+
+---
+
+### 2. 测试驱动 (Test-First)
+
+**原则**：所有关于后端逻辑（如 `app.py` 的状态判断）的修改，必须先编写或更新自动化测试脚本，然后再修改代码。
+
+**操作规范**：
+- 创建 `test_*.py` 测试脚本
+- 修改代码后，运行测试并确认 `Success`
+- 测试必须覆盖：正常流程、边界条件、异常处理
+
+**示例**：
+```bash
+# 运行测试
+python3 test_emotion.py
+
+# 预期输出
+=== 测试总结 ===
+  [thought] 模式: ✓ 通过
+  5秒衰减: ✓ 通过
+  噪音过滤: ✓ 通过
+所有测试通过!
+```
+
+---
+
+### 3. 实时性红线
+
+**原则**：严禁在代码中使用硬编码的日期或绝对路径。所有时间判断必须基于系统实时时钟，所有路径必须基于项目根目录。
+
+**禁止做法**：
+```python
+# ❌ 禁止：硬编码日期
+if "2026-03-15" in line:
+    ...
+
+# ❌ 禁止：硬编码绝对路径
+log_file = "/tmp/openclaw/openclaw-2026-03-14.log"
+```
+
+**正确做法**：
+```python
+# ✅ 正确：动态获取当前时间
+from datetime import datetime
+now = datetime.now()
+
+# ✅ 正确：基于项目根目录的相对路径
+PROJECT_ROOT = Path(__file__).parent
+LOGS_DIR = PROJECT_ROOT / "logs"
+```
+
+---
+
+### 4. Git 存档规范
+
+**原则**：每次完成功能并测试通过后，Claude 应主动运行 `git status` 并建议用户进行 commit。
+
+**操作规范**：
+1. 运行 `git status` 查看改动文件
+2. 运行 `git diff` 预览改动内容
+3. 编写 commit message，包含：
+   - **改动点**：本次修改的核心内容
+   - **测试结果**：自动化测试的通过情况
+
+**示例**：
+```bash
+git status
+git diff
+
+git commit -m "$(cat <<'EOF'
+feat: 优化情绪检测逻辑
+
+改动点：
+- 新增 [thought] 模式检测
+- 添加 5 秒情绪衰减机制
+- 增强噪音过滤规则
+
+测试结果：
+- [thought] 模式: ✓ 通过
+- 5秒衰减: ✓ 通过
+- 噪音过滤: ✓ 通过
+EOF
+)"
+```
+
+---
+
+### 5. 持续集成检查清单
+
+在提交代码前，Claude 必须确认：
+
+- [ ] 代码语法检查通过 (`python3 -m py_compile`)
+- [ ] 自动化测试全部通过
+- [ ] 无硬编码日期或绝对路径
+- [ ] 新增功能已更新文档（如 README.md）
+
+---
+
 ## 定位
 
 专为设计师和开发者打造的可视化监控面板，解决 OpenClaw 运行黑盒、手动启停繁琐的痛点。

@@ -72,6 +72,19 @@
             OpenClaw-Tower 监控面板
         </h1>
 
+        <!-- 表情占位区 -->
+        <div class="flex flex-col items-center justify-center mb-8">
+            <div class="relative">
+                <img id="lobster-emotion" src="assets/lobster/idle.svg" alt="lobster"
+                     class="w-32 h-32 object-contain transition-all duration-300">
+            </div>
+            <!-- 呼吸灯文字条 -->
+            <div id="current-step" class="mt-4 px-6 py-2 bg-gray-800 rounded-full border border-gray-600 text-white text-sm breathing"
+                 style="color: #22c55e; min-width: 200px; text-align: center;">
+                等待任务...
+            </div>
+        </div>
+
         <!-- 状态卡片 -->
         <div class="bg-gray-800 rounded-xl p-6 mb-6 border border-gray-700">
             <h2 class="text-xl font-semibold text-white mb-4">运行状态</h2>
@@ -121,8 +134,8 @@
                 <h2 class="text-xl font-semibold text-white">实时日志</h2>
                 <span id="log-file" class="text-xs text-gray-500"></span>
             </div>
-            <div class="log-container bg-gray-900 rounded-lg p-4 h-96 overflow-y-auto border border-gray-700">
-                <pre id="log-content" class="log-content text-sm text-green-400 whitespace-pre-wrap break-all">加载中...</pre>
+            <div class="log-container bg-gray-900 rounded-lg p-4 h-80 overflow-y-auto border border-gray-700">
+                <div id="log-content" class="text-sm">加载中...</div>
             </div>
         </div>
     </div>
@@ -144,6 +157,25 @@
                 const pidText = document.getElementById('pid-text');
                 const btnStart = document.getElementById('btn-start');
                 const btnStop = document.getElementById('btn-stop');
+
+                // 更新表情图片
+                const emotionImg = document.getElementById('lobster-emotion');
+                const emotion = data.emotion || 'idle';
+                emotionImg.src = `assets/lobster/${emotion}.svg`;
+
+                // 更新当前步骤文字
+                const stepText = document.getElementById('current-step');
+                const currentStep = data.current_step || '等待任务...';
+                stepText.textContent = currentStep;
+
+                // 根据状态调整呼吸灯颜色
+                if (emotion === 'error') {
+                    stepText.style.color = '#ef4444';
+                } else if (emotion === 'busy') {
+                    stepText.style.color = '#f59e0b';
+                } else {
+                    stepText.style.color = '#22c55e';
+                }
 
                 if (data.running) {
                     indicator.className = 'w-6 h-6 rounded-full bg-green-500 breathing';
@@ -212,22 +244,76 @@
             }
         }
 
+        // 格式化日志为 HTML
+        function formatLogs(logs) {
+            if (!logs || logs.length === 0) {
+                return '<div class="text-gray-500">暂无日志</div>';
+            }
+
+            let html = '';
+            for (const log of logs) {
+                // 根据子系统或内容确定颜色
+                let colorClass = 'text-gray-400';
+                let subsystemColor = 'text-blue-400';
+
+                const msg = log.message || '';
+                const lowerMsg = msg.toLowerCase();
+
+                // 错误相关
+                if (lowerMsg.includes('error') || lowerMsg.includes('fail') || lowerMsg.includes('panic')) {
+                    colorClass = 'text-red-400';
+                    subsystemColor = 'text-red-400';
+                }
+                // 任务处理相关
+                else if (lowerMsg.includes('dispatching') || lowerMsg.includes('processing')) {
+                    colorClass = 'text-yellow-400';
+                    subsystemColor = 'text-yellow-400';
+                }
+                // 完成
+                else if (lowerMsg.includes('complete') || lowerMsg.includes('done') || lowerMsg.includes('success')) {
+                    colorClass = 'text-green-400';
+                    subsystemColor = 'text-green-400';
+                }
+                // 用户消息
+                else if (lowerMsg.includes('dm from') || lowerMsg.includes('received message')) {
+                    colorClass = 'text-cyan-400';
+                    subsystemColor = 'text-cyan-400';
+                }
+                // 工具调用
+                else if (lowerMsg.includes('tool') || lowerMsg.includes('invoke') || lowerMsg.includes('calling')) {
+                    colorClass = 'text-purple-400';
+                    subsystemColor = 'text-purple-400';
+                }
+
+                html += `<div class="log-entry py-1 border-b border-gray-800 hover:bg-gray-800">
+                    <span class="text-xs text-gray-600 mr-2">${log.time || ''}</span>
+                    <span class="text-xs ${subsystemColor} mr-2 font-mono">[${log.subsystem || ''}]</span>
+                    <span class="${colorClass}">${escapeHtml(msg)}</span>
+                </div>`;
+            }
+            return html;
+        }
+
+        // 转义 HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
         // 更新日志
         async function updateLogs() {
             try {
-                const res = await fetch(`${API_BASE}/api/logs?lines=50`);
+                const res = await fetch(`${API_BASE}/api/logs?lines=30`);
                 const data = await res.json();
 
                 // 更新日志内容
                 const logContent = document.getElementById('log-content');
-                if (data.logs && data.logs.length > 0) {
-                    logContent.textContent = data.logs.join('\n');
-                } else {
-                    logContent.textContent = '暂无日志';
-                }
+                logContent.innerHTML = formatLogs(data.logs);
 
                 // 显示日志文件名
-                document.getElementById('log-file').textContent = data.file || '';
+                const fileName = data.file ? data.file.split('/').pop() : '';
+                document.getElementById('log-file').textContent = fileName;
 
                 // 报警检测
                 checkAlert(data.has_error);
@@ -265,11 +351,11 @@
             await updateStatus();
             await updateLogs();
 
-            // 每2秒刷新日志
+            // 每1秒刷新状态和日志
             logInterval = setInterval(async () => {
                 await updateStatus();
                 await updateLogs();
-            }, 2000);
+            }, 1000);
         }
 
         init();
